@@ -1,7 +1,8 @@
 package com.yupi.yupicturebackend.controller;
 
-
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.http.HttpUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.yupi.yupicturebackend.annotation.AuthCheck;
 import com.yupi.yupicturebackend.common.BaseResponse;
@@ -21,19 +22,18 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.nio.file.Files;
 import java.util.List;
 
 @RestController
 @RequestMapping("/user")
 public class UserController {
+
     @Resource
     private UserService userService;
 
     /**
      * 用户注册
-     *
-     * @param userRegisterRequest 用户注册请求体，包含用户账户、密码和确认密码
-     * @return 新注册用户的ID
      */
     @PostMapping("/register")
     public BaseResponse<Long> userRegister(@RequestBody UserRegisterRequest userRegisterRequest) {
@@ -44,60 +44,52 @@ public class UserController {
         long result = userService.userRegister(userAccount, userPassword, checkPassword);
         return ResultUtils.success(result);
     }
+
     /**
      * 用户登录
-     *
-     * @param userLoginRequest 用户登录请求体，包含用户账户和密码
-     * @param request 请求对象，用于获取当前登录用户的信息
-     * @return 登录成功后的用户信息
      */
     @PostMapping("/login")
-    public BaseResponse<LoginUserVO> userLogin(@RequestBody UserLoginRequest userLoginRequest , HttpServletRequest request) {
+    public BaseResponse<LoginUserVO> userLogin(@RequestBody UserLoginRequest userLoginRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(userLoginRequest == null, ErrorCode.PARAMS_ERROR);
-        LoginUserVO loginUserVO = userService.userLogin(userLoginRequest, request);
+        String userAccount = userLoginRequest.getUserAccount();
+        String userPassword = userLoginRequest.getUserPassword();
+        LoginUserVO loginUserVO = userService.userLogin(userAccount, userPassword, request);
         return ResultUtils.success(loginUserVO);
     }
 
     /**
      * 获取当前登录用户
-     *
-     * @param request 请求对象，用于获取当前登录用户的信息
-     * @return 当前登录用户的信息
      */
     @GetMapping("/get/login")
     public BaseResponse<LoginUserVO> getLoginUser(HttpServletRequest request) {
-        // 步骤1：获取 User 实体
         User loginUser = userService.getLoginUser(request);
-        // 步骤2：转换为 VO 并返回
         return ResultUtils.success(userService.getLoginUserVO(loginUser));
     }
 
+    /**
+     * 用户注销
+     */
     @PostMapping("/logout")
     public BaseResponse<Boolean> userLogout(HttpServletRequest request) {
-        if (request == null) {
-            throw new RuntimeException("request error");
-        }
+        ThrowUtils.throwIf(request == null, ErrorCode.PARAMS_ERROR);
         boolean result = userService.userLogout(request);
         return ResultUtils.success(result);
     }
 
     /**
-     * 添加用户
-     *
-     * @param userAddRequest 用户添加请求体
-     * @param request 请求对象，用于获取当前登录用户信息
-     * @return 新用户ID
+     * 创建用户
      */
     @PostMapping("/add")
-    public BaseResponse<Long> addUser(@RequestBody UserAddRequest userAddRequest, HttpServletRequest request) {
-
+    @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    public BaseResponse<Long> addUser(@RequestBody UserAddRequest userAddRequest) {
         ThrowUtils.throwIf(userAddRequest == null, ErrorCode.PARAMS_ERROR);
         User user = new User();
-        BeanUtils.copyProperties(userAddRequest, user);
-        //默认密码
-        String encryptPassword = userService.getEncryptPassword("12345678");
-        user.setUserPassword(encryptPassword );
-        //添加用户到数据库
+        BeanUtil.copyProperties(userAddRequest, user);
+        // 默认密码
+        final String DEFAULT_PASSWORD = "12345678";
+        String encryptPassword = userService.getEncryptPassword(DEFAULT_PASSWORD);
+        user.setUserPassword(encryptPassword);
+        // 插入数据库
         boolean result = userService.save(user);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         return ResultUtils.success(user.getId());
@@ -106,16 +98,6 @@ public class UserController {
     /**
      * 根据 id 获取用户（仅管理员）
      */
-    // @GetMapping("/get")
-    // @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    // public BaseResponse<UserVO> getUserById(Long id) {
-    //     ThrowUtils.throwIf(id <= 0, ErrorCode.PARAMS_ERROR);
-    //     User user = userService.getById(id);
-    //     UserVO userVO = userService.getUserVO(user);
-    //     ThrowUtils.throwIf(userVO == null, ErrorCode.NOT_FOUND_ERROR, "用户不存在");
-    //     return ResultUtils.success(userVO);
-    //
-    // }
     @GetMapping("/get")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
     public BaseResponse<User> getUserById(long id) {
@@ -134,6 +116,7 @@ public class UserController {
         User user = response.getData();
         return ResultUtils.success(userService.getUserVO(user));
     }
+
     /**
      * 删除用户
      */
@@ -141,40 +124,59 @@ public class UserController {
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
     public BaseResponse<Boolean> deleteUser(@RequestBody DeleteRequest deleteRequest) {
         if (deleteRequest == null || deleteRequest.getId() <= 0) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"用户ID不合法");
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         boolean b = userService.removeById(deleteRequest.getId());
         return ResultUtils.success(b);
     }
+
     /**
      * 更新用户
      */
     @PostMapping("/update")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
     public BaseResponse<Boolean> updateUser(@RequestBody UserUpdateRequest userUpdateRequest) {
-        ThrowUtils.throwIf(userUpdateRequest == null || userUpdateRequest.getId() <= 0, ErrorCode.PARAMS_ERROR);
+        if (userUpdateRequest == null || userUpdateRequest.getId() == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
         User user = new User();
         BeanUtils.copyProperties(userUpdateRequest, user);
         boolean result = userService.updateById(user);
-        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR,"更新失败");
-        return ResultUtils.success(result);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        return ResultUtils.success(true);
     }
 
     /**
-     * 分页查询
+     * 分页获取用户封装列表（仅管理员）
+     *
+     * @param userQueryRequest 查询请求参数
      */
-    @GetMapping("/list/page")
+    @PostMapping("/list/page/vo")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<Page<UserVO>> listUserByPage(UserQueryRequest userQueryRequest) {
-        ThrowUtils.throwIf(userQueryRequest==null, ErrorCode.PARAMS_ERROR);
-        int current = userQueryRequest.getCurrent();
-        int pageSize = userQueryRequest.getPageSize();
-        Page<User> userPage = userService.page(new Page<>(current, pageSize), userService.getQueryWrapper(userQueryRequest));
+    public BaseResponse<Page<UserVO>> listUserVOByPage(@RequestBody UserQueryRequest userQueryRequest) {
+        ThrowUtils.throwIf(userQueryRequest == null, ErrorCode.PARAMS_ERROR);
+        long current = userQueryRequest.getCurrent();
+        long pageSize = userQueryRequest.getPageSize();
+        Page<User> userPage = userService.page(new Page<>(current, pageSize),
+                userService.getQueryWrapper(userQueryRequest));
         Page<UserVO> userVOPage = new Page<>(current, pageSize, userPage.getTotal());
         List<UserVO> userVOList = userService.getUserVOList(userPage.getRecords());
         userVOPage.setRecords(userVOList);
         return ResultUtils.success(userVOPage);
-
     }
-}
 
+    /**
+     * 兑换会员
+     */
+    @PostMapping("/exchange/vip")
+    public BaseResponse<Boolean> exchangeVip(@RequestBody VipExchangeRequest vipExchangeRequest,
+                                             HttpServletRequest httpServletRequest) {
+        ThrowUtils.throwIf(vipExchangeRequest == null, ErrorCode.PARAMS_ERROR);
+        String vipCode = vipExchangeRequest.getVipCode();
+        User loginUser = userService.getLoginUser(httpServletRequest);
+        // 调用 service 层的方法进行会员兑换
+        boolean result = userService.exchangeVip(loginUser, vipCode);
+        return ResultUtils.success(result);
+    }
+
+}

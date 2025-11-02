@@ -15,6 +15,15 @@ spring:
     url: jdbc:mysql://localhost:3306/yu_picture
     username: root
     password: 123456
+    # Session 配置
+  session:
+    store-type: redis
+    # session 30 天后过期
+    timeout: 2592000
+  # 开放更大的文件上传体积
+  servlet:
+    multipart:
+      max-file-size: 10MB
   redis:
     database: 0
     host: 127.0.0.1
@@ -43,3 +52,13 @@ knife4j:
         api-rule: package
         api-rule-resources:
           - com.yupi.yupicturebackend.controller
+
+
+## 对象存储配置（需要从腾讯云获取）
+#cos:
+#  client:
+#    host: xxx
+#    secretId: xxx
+#    secretKey: xxx
+#    region: xxx
+#    bucket: xxx
