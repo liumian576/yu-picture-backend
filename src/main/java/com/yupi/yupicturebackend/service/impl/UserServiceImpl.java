@@ -87,7 +87,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         User user = new User();
         user.setUserAccount(userAccount);
         user.setUserPassword(encryptPassword);
-        user.setUserName("无名");
+        user.setUserName("用户昵称");
         user.setUserRole(UserRoleEnum.USER.getValue());
         boolean saveResult = this.save(user);
         if (!saveResult) {
@@ -135,7 +135,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
     @Override
     public String getEncryptPassword(String userPassword) {
         // 加盐，混淆密码
-        final String SALT = "yupi";
+        final String SALT = "cheramvb";
         return DigestUtils.md5DigestAsHex((SALT + userPassword).getBytes());
     }
 

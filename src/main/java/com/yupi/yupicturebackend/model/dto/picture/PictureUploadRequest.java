@@ -3,6 +3,7 @@ package com.yupi.yupicturebackend.model.dto.picture;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * 图片上传请求
@@ -31,6 +32,7 @@ public class PictureUploadRequest implements Serializable {
      * 空间 id
      */
     private Long spaceId;
+
 
     private static final long serialVersionUID = 1L;
 }
