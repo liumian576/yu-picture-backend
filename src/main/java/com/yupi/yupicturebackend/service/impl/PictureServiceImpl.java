@@ -27,6 +27,7 @@ import com.yupi.yupicturebackend.service.PictureService;
 import com.yupi.yupicturebackend.mapper.PictureMapper;
 import com.yupi.yupicturebackend.service.SpaceService;
 import com.yupi.yupicturebackend.service.UserService;
+import com.yupi.yupicturebackend.utils.ColorSimilarUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -35,31 +36,31 @@ import org.jsoup.select.Elements;
 import org.springframework.beans.BeanUtils;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
+import java.awt.*;
 import java.io.IOException;
-import java.util.Date;
+import java.util.*;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
-* @author cheramvb
-* @description 针对表【picture(图片)】的数据库操作Service实现
-* @createDate 2025-11-02 00:50:17
-*/
+ * @author cheramvb
+ * @description 针对表【picture(图片)】的数据库操作Service实现
+ * @createDate 2025-11-02 00:50:17
+ */
 @Service
 @Slf4j
 public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
-    implements PictureService{
+        implements PictureService {
 
     // 6. 引入 FileManager 对象
     // @Resource
     // private FileManager fileManager;
-    //引入用户服务
+    // 引入用户服务
     @Resource
     private UserService userService;
 
@@ -76,6 +77,8 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
     @Resource
     private TransactionTemplate transactionTemplate;
+
+
     /**
      * 验证数据
      *
@@ -100,7 +103,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
     /**
-     * 上传更新图片
+     * 上传图片
      *
      * @param inputSource
      * @param pictureUploadRequest
@@ -110,9 +113,9 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     @Override
     public PictureVO uploadPicture(Object inputSource, PictureUploadRequest pictureUploadRequest, User loginUser) {
         // 1. 校验参数, 用户未登录, 抛出没有权限的异常
-        ThrowUtils.throwIf(loginUser == null , ErrorCode.NO_AUTH_ERROR);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NO_AUTH_ERROR);
 
-        //校验空间是否存在
+        // 校验空间是否存在
         Long spaceId = pictureUploadRequest.getSpaceId();
         if (spaceId != null) {
             Space space = spaceService.getById(spaceId);
@@ -131,7 +134,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         }
         // 2. 判断是新增图片, 还是更新图片, 所以先判断图片是否存在
         Long pictureId = null;
-        if(pictureUploadRequest != null){
+        if (pictureUploadRequest != null) {
             // 3. 如果传入的请求不为空, 才获取请求中的图片 ID
             pictureId = pictureUploadRequest.getId();
         }
@@ -140,12 +143,12 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         if (pictureId != null) {
             Picture oldPicture = this.getById(pictureId);
             ThrowUtils.throwIf(oldPicture == null, ErrorCode.NOT_FOUND_ERROR, "图片不存在");
-            //仅本人或管理员可以编辑
+            // 仅本人或管理员可以编辑
             if (!oldPicture.getUserId().equals(loginUser.getId()) && !userService.isAdmin(loginUser)) {
                 throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
             }
 
-            //校验空间id是否一致
+            // 校验空间id是否一致
             // 空间id为空时，使用旧图片的空间id
             if (spaceId == null) {
                 if (oldPicture.getSpaceId() != null) {
@@ -183,7 +186,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         picture.setThumbnailUrl(uploadPictureResult.getThumbnailUrl());
         String picName = uploadPictureResult.getPicName();
         picture.setSpaceId(spaceId);
-        if(pictureUploadRequest!=null && StrUtil.isNotBlank(pictureUploadRequest.getPicName())){
+        if (pictureUploadRequest != null && StrUtil.isNotBlank(pictureUploadRequest.getPicName())) {
             // 图片更新请求不为空, 并且图片更新请求中的图片名称属性不为空, 以更新请求的图片名称, 代替图片解析结果的名称
             // pictureUploadRequest 的 PicName 属性是允许用户传递的
             picName = pictureUploadRequest.getPicName();
@@ -194,18 +197,19 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         picture.setPicHeight(uploadPictureResult.getPicHeight());
         picture.setPicScale(uploadPictureResult.getPicScale());
         picture.setPicFormat(uploadPictureResult.getPicFormat());
+        picture.setPicColor(uploadPictureResult.getPicColor());
         // 从当前登录用户中获取 userId
         picture.setUserId(loginUser.getId());
         // fillReviewParams( picture, loginUser);
-        this.fillReviewParams( picture, loginUser);
+        this.fillReviewParams(picture, loginUser);
 
         // 10. 操作数据库, 如果 pictureId 不为空, 表示更新图片, 否则为新增图片
-        if(pictureId!=null){
+        if (pictureId != null) {
             // 11. 如果是更新, 需要补充 id 和编辑时间
             picture.setId(pictureId);
             picture.setEditTime(new Date());
         }
-        //更新事务
+        // 更新事务
         Long finalSpaceId = spaceId;
         transactionTemplate.execute(status -> {
             boolean result = this.saveOrUpdate(picture);
@@ -263,6 +267,9 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         Integer reviewStatus = pictureQueryRequest.getReviewStatus();
         String reviewMessage = pictureQueryRequest.getReviewMessage();
         Long reviewerId = pictureQueryRequest.getReviewerId();
+        Date startEditTime = pictureQueryRequest.getStartEditTime();
+        Date endEditTime = pictureQueryRequest.getEndEditTime();
+
         // 从多字段中搜索
         if (StrUtil.isNotBlank(searchText)) {
             // 需要拼接查询条件
@@ -287,6 +294,8 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         queryWrapper.eq(ObjUtil.isNotEmpty(picScale), "picScale", picScale);
         queryWrapper.eq(ObjUtil.isNotEmpty(reviewStatus), "reviewStatus", reviewStatus);
         queryWrapper.eq(ObjUtil.isNotEmpty(reviewerId), "reviewerId", reviewerId);
+        queryWrapper.ge(ObjUtil.isNotEmpty(startEditTime), "editTime", startEditTime);
+        queryWrapper.lt(ObjUtil.isNotEmpty(endEditTime), "editTime", endEditTime);
 
         // JSON 数组查询
         if (CollUtil.isNotEmpty(tags)) {
@@ -300,6 +309,13 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         return queryWrapper;
     }
 
+    /**
+     * 获取图片包装类（单条）
+     *
+     * @param picture
+     * @param request
+     * @return
+     */
     @Override
     public PictureVO getPictureVO(Picture picture, HttpServletRequest request) {
         // 对象转封装类
@@ -315,10 +331,11 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
     /**
-     * 分页查询
+     * 获取图片包装类（分页）
+     *
      * @param picturePage
      * @param request
-     * @return 将分页 Page 中的 picture 转为分页 Page 中的 pictureVO
+     * @return
      */
     @Override
     public Page<PictureVO> getPictureVOPage(Page<Picture> picturePage, HttpServletRequest request) {
@@ -372,12 +389,18 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         return pictureVOPage;
     }
 
+    /**
+     * 图片审核
+     *
+     * @param pictureReviewRequest
+     * @param loginUser
+     */
     @Override
     public void doPictureReview(PictureReviewRequest pictureReviewRequest, User loginUser) {
         // 1. 校验参数
         ThrowUtils.throwIf(pictureReviewRequest == null, ErrorCode.PARAMS_ERROR);
 
-        //2. 获取图片信息
+        // 2. 获取图片信息
         Long id = pictureReviewRequest.getId();
         Integer reviewStatus = pictureReviewRequest.getReviewStatus();
 
@@ -387,13 +410,14 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         String reviewMessage = pictureReviewRequest.getReviewMessage();
         // 4. 校验审核请求
         ThrowUtils.throwIf(id == null || PictureReviewStatusEnum.REVIEWING.equals(reviewStatus), ErrorCode.PARAMS_ERROR);
-        //5.  判断 图片是否存在
+        // 5.  判断 图片是否存在
         Picture oldPicture = this.getById(id);
         ThrowUtils.throwIf(oldPicture == null, ErrorCode.NOT_FOUND_ERROR);
         // 6. 校验审核状态是否重复
-        if(oldPicture.getReviewStatus().equals(reviewStatus)){
+        if (oldPicture.getReviewStatus().equals(reviewStatus)) {
             // 7. 数据库存储的图片状态, 于当前发送审核请求的图片对应的状态相同, 则不能再次调用审核操作, 抛异常
-            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请勿重复审核");}
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请勿重复审核");
+        }
 
         // 8. 数据库操作
         // 9. 不能直接以 oldPicture 对象作为更新对象, 而是要重新创建一个新对象
@@ -410,24 +434,32 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
     /**
-     * 填充审核参数接口
+     * 填充审核参数
+     *
      * @param picture
      * @param loginUser
      */
     @Override
-    public void fillReviewParams(Picture picture, User loginUser){
-        if(userService.isAdmin(loginUser)){
+    public void fillReviewParams(Picture picture, User loginUser) {
+        if (userService.isAdmin(loginUser)) {
             // 1. 管理员自动过审
             picture.setReviewStatus(PictureReviewStatusEnum.PASS.getValue());
             picture.setReviewerId(loginUser.getId());
             picture.setReviewMessage("管理员自动过审");
             picture.setReviewTime(new Date());
-        }else {
+        } else {
             // 2. 非管理员, 无论编辑图片还是创建图片, 都默认图片审核状态为待审核
             picture.setReviewStatus(PictureReviewStatusEnum.REVIEWING.getValue());
         }
     }
 
+    /**
+     * 批量抓取和创建图片
+     *
+     * @param pictureUploadByBatchRequest
+     * @param loginUser
+     * @return 成功创建的图片数
+     */
     @Override
     public Integer uploadPictureByBatch(PictureUploadByBatchRequest pictureUploadByBatchRequest, User loginUser) {
         // 1. 获取参数 pictureUploadByBatchRequest.allget
@@ -499,7 +531,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
 
             // 18. 捕获上传图片操作可能抛出的异常
-            try{
+            try {
                 // 16. 上传图片, 其中 loginUser 参数是作为该批量抓取方法的参数传进来的
                 PictureVO pictureVO = this.uploadPicture(fileUrl, pictureUploadRequest, loginUser);
 
@@ -507,19 +539,25 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
                 log.info("图片上传成功, id = {}", pictureVO.getId());
 
                 uploadCount++;
-            }catch (Exception e){
+            } catch (Exception e) {
                 log.error("图片上传失败", e);
                 continue;
                 // 使用 continue, uploadCount++ 的操作不会被执行
             }
 
-            if(uploadCount >= count){
+            if (uploadCount >= count) {
                 break;
             }
         }
         return uploadCount;
     }
 
+    /**
+     * 删除图片
+     *
+     * @param pictureId
+     * @param loginUser
+     */
     @Override
     public void deletePicture(long pictureId, User loginUser) {
         ThrowUtils.throwIf(pictureId <= 0, ErrorCode.PARAMS_ERROR);
@@ -551,6 +589,12 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
 
     }
 
+    /**
+     * 用户编辑图片
+     *
+     * @param pictureEditRequest
+     * @param loginUser
+     */
     @Override
     public void editPicture(PictureEditRequest pictureEditRequest, User loginUser) {
         // 在此处将实体类和 DTO 进行转换
@@ -566,7 +610,7 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         long id = pictureEditRequest.getId();
         Picture oldPicture = this.getById(id);
         ThrowUtils.throwIf(oldPicture == null, ErrorCode.NOT_FOUND_ERROR);
-        //权限验证   仅本人或管理员可编辑
+        // 权限验证   仅本人或管理员可编辑
         checkPictureAuth(loginUser, oldPicture);
 
         this.fillReviewParams(picture, loginUser);
@@ -576,6 +620,11 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
     }
 
 
+    /**
+     * 清理图片文件
+     *
+     * @param oldPicture
+     */
     @Async
     @Override
     public void clearPictureFile(Picture oldPicture) {
@@ -597,22 +646,189 @@ public class PictureServiceImpl extends ServiceImpl<PictureMapper, Picture>
         }
     }
 
+    /**
+     * 检验图片权限
+     *
+     * @param loginUser 登录用户对象
+     * @param picture   需要验证权限的图片对象
+     */
     @Override
     public void checkPictureAuth(User loginUser, Picture picture) {
+        // 获取图片所属的空间ID
         Long spaceId = picture.getSpaceId();
+        // 判断空间ID是否为空
         if (spaceId == null) {
 
+            // 如果空间ID为空，检查当前用户是否为图片所有者或管理员
             if (!picture.getUserId().equals(loginUser.getId()) && !userService.isAdmin(loginUser)) {
+                // 如果用户既不是图片所有者也不是管理员，抛出无权限异常
                 throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
             }
         } else {
 
+            // 如果空间ID不为空，检查当前用户是否为图片所有者
             if (!picture.getUserId().equals(loginUser.getId())) {
+                // 如果用户不是图片所有者，抛出无权限异常
                 throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
             }
         }
     }
 
+    /**
+     * 颜色搜图
+     * 根据指定的颜色在指定空间中搜索相似颜色的图片
+     *
+     * @param spaceId   空间ID，用于指定搜索范围
+     * @param picColor  目标颜色值，十六进制格式字符串，如"#FFFFFF"
+     * @param loginUser 执行搜索操作的用户对象
+     * @return 返回匹配的图片VO对象列表，按颜色相似度降序排列，最多返回12条记录
+     */
+    @Override
+    public List<PictureVO> searchPictureByColor(Long spaceId, String picColor, User loginUser) {
+
+        // 参数校验：检查spaceId和picColor是否为空或无效
+        ThrowUtils.throwIf(spaceId == null || StrUtil.isBlank(picColor), ErrorCode.PARAMS_ERROR);
+        // 参数校验：检查登录用户是否存在
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NO_AUTH_ERROR);
+
+        // 获取空间信息
+        Space space = spaceService.getById(spaceId);
+        ThrowUtils.throwIf(space == null, ErrorCode.NOT_FOUND_ERROR, "空间不存在");
+        // 权限校验：检查用户是否有权限访问该空间
+        if (!loginUser.getId().equals(space.getUserId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "没有空间访问权限");
+        }
+
+        // 查询指定空间中所有颜色值不为null的图片
+        List<Picture> pictureList = this.lambdaQuery()
+                .eq(Picture::getSpaceId, spaceId)
+                .isNotNull(Picture::getPicColor)
+                .list();
+
+        // 如果没有找到任何图片，返回空列表
+        if (CollUtil.isEmpty(pictureList)) {
+            return Collections.emptyList();
+        }
+
+        // 将目标颜色字符串转换为Color对象
+        Color targetColor = Color.decode(picColor);
+
+        // 对图片进行排序：按颜色相似度降序排列
+        List<Picture> sortedPictures = pictureList.stream()
+                .sorted(Comparator.comparingDouble(picture -> {
+
+                    String hexColor = picture.getPicColor();
+
+                    // 如果图片颜色为空，将其排在最后
+                    if (StrUtil.isBlank(hexColor)) {
+                        return Double.MAX_VALUE;
+                    }
+                    // 将图片颜色字符串转换为Color对象
+                    Color pictureColor = Color.decode(hexColor);
+
+                    // 计算颜色相似度并返回负值（因为要降序排列）
+                    return -ColorSimilarUtils.calculateSimilarity(targetColor, pictureColor);
+                }))
+
+                // 只取前12个结果
+                .limit(12)
+                .collect(Collectors.toList());
+
+
+        // 将Picture对象列表转换为PictureVO对象列表并返回
+        return sortedPictures.stream()
+                .map(PictureVO::objToVo)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 批量编辑图片信息
+     * 该方法允许用户批量修改指定空间中的多张图片的分类和标签信息
+     *
+     * @param pictureEditByBatchRequest 批量编辑图片请求参数，包含图片ID列表、空间ID、分类和标签
+     * @param loginUser                 当前登录用户信息，用于验证用户权限
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class) // 事务注解，表示该方法发生异常时会回滚
+    public void editPictureByBatch(PictureEditByBatchRequest pictureEditByBatchRequest, User loginUser) {
+        // 从请求参数中获取图片ID列表、空间ID、分类和标签
+        List<Long> pictureIdList = pictureEditByBatchRequest.getPictureIdList();
+        Long spaceId = pictureEditByBatchRequest.getSpaceId();
+        String category = pictureEditByBatchRequest.getCategory();
+        List<String> tags = pictureEditByBatchRequest.getTags();
+
+
+        // 参数校验：如果空间ID为空或图片ID列表为空，则抛出参数错误异常
+        // 如果登录用户为空，则抛出无权限异常
+        ThrowUtils.throwIf(spaceId == null || CollUtil.isEmpty(pictureIdList), ErrorCode.PARAMS_ERROR);
+        ThrowUtils.throwIf(loginUser == null, ErrorCode.NO_AUTH_ERROR);
+
+        // 根据空间ID查询空间信息
+        Space space = spaceService.getById(spaceId);
+        // 校验空间是否存在，不存在则抛出异常
+        ThrowUtils.throwIf(space == null, ErrorCode.NOT_FOUND_ERROR, "空间不存在");
+        // 校验当前用户是否有权限操作该空间，没有权限则抛出异常
+        if (!loginUser.getId().equals(space.getUserId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "没有空间访问权限");
+        }
+        // 查询指定空间下的所有待编辑图片
+        List<Picture> pictureList = this.lambdaQuery()
+                .select(Picture::getId, Picture::getSpaceId) // 只查询ID和空间ID字段
+                .eq(Picture::getSpaceId, spaceId) // 筛选条件：空间ID匹配
+                .in(Picture::getId, pictureIdList) // 筛选条件：图片ID在列表中
+                .list();
+
+        // 如果没有找到任何图片，则直接返回
+        if (pictureList.isEmpty()) {
+            return;
+        }
+        // 遍历图片列表，更新分类和标签信息
+        pictureList.forEach(picture -> {
+            // 如果分类不为空，则更新图片分类
+            if (StrUtil.isNotBlank(category)) {
+                picture.setCategory(category);
+            }
+            // 如果标签列表不为空，则将标签列表转换为JSON字符串并更新
+            if (CollUtil.isNotEmpty(tags)) {
+                picture.setTags(JSONUtil.toJsonStr(tags));
+            }
+        });
+        // 批量重命名
+        String nameRule = pictureEditByBatchRequest.getNameRule();
+        fillPictureWithNameRule(pictureList, nameRule);
+        // 批量更新图片信息
+        boolean result = this.updateBatchById(pictureList);
+        // 校验更新结果，如果更新失败则抛出操作异常
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+    }
+
+    /**
+     * 根据指定的命名规则为图片列表设置名称
+     *
+     * @param pictureList 图片列表
+     * @param nameRule    命名规则，可以使用{序号}作为占位符
+     */
+    private void fillPictureWithNameRule(List<Picture> pictureList, String nameRule) {
+        // 检查图片列表或命名规则是否为空
+        if (CollUtil.isEmpty(pictureList) || StrUtil.isBlank(nameRule)) {
+            return;
+        }
+        long count = 1;  // 初始化序号计数器
+        try {
+            // 遍历图片列表，为每个图片设置名称
+            for (Picture picture : pictureList) {
+                // 使用命名规则替换{序号}为当前序号，并递增计数器
+                String pictureName = nameRule.replaceAll("\\{序号}", String.valueOf(count++));
+                // 设置图片名称
+                picture.setName(pictureName);
+            }
+        } catch (Exception e) {
+            // 记录错误日志
+            log.error("名称解析错误", e);
+            // 抛出业务异常
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "名称解析错误");
+        }
+    }
 
 
 }

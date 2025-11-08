@@ -87,6 +87,11 @@ public class Picture implements Serializable {
     private Long spaceId;
 
     /**
+     * 图片颜色
+     */
+    private String picColor;
+
+    /**
      * 创建时间
      */
     private Date createTime;

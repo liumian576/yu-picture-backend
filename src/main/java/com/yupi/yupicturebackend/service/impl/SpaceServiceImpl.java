@@ -55,27 +55,28 @@ public class SpaceServiceImpl extends ServiceImpl<SpaceMapper, Space>
 
     @Override
     public long addSpace(SpaceAddRequest spaceAddRequest, User loginUser) {
-
+        //spaceAddRequest -> space
         Space space = new Space();
         BeanUtils.copyProperties(spaceAddRequest, space);
-
+        //默认
         if (StrUtil.isBlank(spaceAddRequest.getSpaceName())) {
             space.setSpaceName("默认空间");
         }
         if (spaceAddRequest.getSpaceLevel() == null) {
             space.setSpaceLevel(SpaceLevelEnum.COMMON.getValue());
         }
-
+        //填充
         this.fillSpaceBySpaceLevel(space);
-
+        //校验
         this.validSpace(space, true);
+        //space 添加 userId
         Long userId = loginUser.getId();
         space.setUserId(userId);
-
+        //权限校验
         if (SpaceLevelEnum.COMMON.getValue() != spaceAddRequest.getSpaceLevel() && !userService.isAdmin(loginUser)) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限创建指定级别的空间");
         }
-
+        //创建空间 事务保证只能创建一个
         String lock = String.valueOf(userId).intern();
         synchronized (lock) {
             Long newSpaceId = transactionTemplate.execute(status -> {
@@ -141,8 +142,12 @@ public class SpaceServiceImpl extends ServiceImpl<SpaceMapper, Space>
 
     @Override
     public Page<SpaceVO> getSpaceVOPage(Page<Space> spacePage, HttpServletRequest request) {
+        // 从分页结果中获取当前页的空间数据列表
         List<Space> spaceList = spacePage.getRecords();
+
+        // 创建新的分页对象 保持与原分页相同的页码、页大小和总记录数，但记录内容转换为VO格式
         Page<SpaceVO> spaceVOPage = new Page<>(spacePage.getCurrent(), spacePage.getSize(), spacePage.getTotal());
+        // 判空，性能优化，空直接返回不浪费资源
         if (CollUtil.isEmpty(spaceList)) {
             return spaceVOPage;
         }
@@ -151,12 +156,12 @@ public class SpaceServiceImpl extends ServiceImpl<SpaceMapper, Space>
                 .map(SpaceVO::objToVo)
                 .collect(Collectors.toList());
         // 1. 关联查询用户信息
-        // 1,2,3,4
+        //获取用户id
         Set<Long> userIdSet = spaceList.stream().map(Space::getUserId).collect(Collectors.toSet());
-        // 1 => user1, 2 => user2
+        //获取用户信息
         Map<Long, List<User>> userIdUserListMap = userService.listByIds(userIdSet).stream()
                 .collect(Collectors.groupingBy(User::getId));
-        // 2. 填充信息
+        //填充用户信息
         spaceVOList.forEach(spaceVO -> {
             Long userId = spaceVO.getUserId();
             User user = null;
@@ -165,6 +170,7 @@ public class SpaceServiceImpl extends ServiceImpl<SpaceMapper, Space>
             }
             spaceVO.setUser(userService.getUserVO(user));
         });
+        //list -> VO
         spaceVOPage.setRecords(spaceVOList);
         return spaceVOPage;
     }
@@ -196,6 +202,7 @@ public class SpaceServiceImpl extends ServiceImpl<SpaceMapper, Space>
 
     @Override
     public void fillSpaceBySpaceLevel(Space space) {
+        //获取枚举类假设的最大值
         SpaceLevelEnum spaceLevelEnum = SpaceLevelEnum.getEnumByValue(space.getSpaceLevel());
         if (spaceLevelEnum != null) {
             long maxSize = spaceLevelEnum.getMaxSize();

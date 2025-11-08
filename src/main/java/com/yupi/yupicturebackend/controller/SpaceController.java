@@ -51,7 +51,9 @@ public class SpaceController {
     @PostMapping("/add")
     public BaseResponse<Long> addSpace(@RequestBody SpaceAddRequest spaceAddRequest, HttpServletRequest request) {
         ThrowUtils.throwIf(spaceAddRequest == null, ErrorCode.PARAMS_ERROR);
+        //获取用户登录信息
         User loginUser = userService.getLoginUser(request);
+        //添加空间
         long newId = spaceService.addSpace(spaceAddRequest, loginUser);
         return ResultUtils.success(newId);
     }
