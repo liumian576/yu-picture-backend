@@ -33,4 +33,6 @@ public interface SpaceService extends IService<Space> {
 
 
     void checkPictureAuth(User loginUser, Picture picture);
+
+    void checkSpaceAuth(User loginUser, Space space);
 }
